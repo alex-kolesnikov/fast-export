@@ -242,7 +242,7 @@ def strip_leading_slash(filename):
 
 def export_commit(ui,repo,revision,old_marks,max,count,authors,
                   branchesmap,sob,brmap,hgtags,encoding='',fn_encoding='',
-                  plugins={}):
+                  plugins={}, closed_branch_tips={}):
   def get_branchname(name):
     if brmap.has_key(name):
       return brmap[name]
@@ -250,7 +250,11 @@ def export_commit(ui,repo,revision,old_marks,max,count,authors,
     brmap[name]=n
     return n
 
-  (revnode,_,user,(time,timezone),files,desc,branch,_)=get_changeset(ui,repo,revision,authors,encoding)
+  (revnode,_,user,(time,timezone),files,desc,_branch,_)=get_changeset(ui,repo,revision,authors,encoding)
+
+  if revnode in closed_branch_tips:
+    sys.stderr.write('change ' + _branch + ' to ' + closed_branch_tips[revnode] + '\n')
+  branch = closed_branch_tips.get(revnode, _branch)
 
   branch=get_branchname(branch)
 
@@ -418,7 +422,7 @@ def branchtip(repo, heads):
       break
   return tip
 
-def verify_heads(ui,repo,cache,force,branchesmap):
+def verify_heads(ui,repo,cache,force,branchesmap, closed_branch_tips={}):
   branches={}
   for bn, heads in repo.branchmap().iteritems():
     branches[bn] = branchtip(repo, heads)
@@ -439,11 +443,14 @@ def verify_heads(ui,repo,cache,force,branchesmap):
   # verify that branch has exactly one head
   t={}
   for h in repo.heads():
-    (_,_,_,_,_,_,branch,_)=get_changeset(ui,repo,h)
+    (node,_,_,_,_,desc,branch,_)=get_changeset(ui,repo,h)
     if t.get(branch,False):
       sys.stderr.write('Error: repository has at least one unnamed head: hg r%s\n' %
           repo.changelog.rev(h))
-      if not force: return False
+      # if not force: return False
+      sys.stderr.write(branch + '; ' + desc + '\n\n')
+      closed_branch_tips[node] = branch + '_closed'
+
     t[branch]=True
 
   return True
@@ -471,7 +478,8 @@ def hg2git(repourl,m,marksfile,mappingfile,headsfile,tipfile,
 
   ui,repo=setup_repo(repourl)
 
-  if not verify_heads(ui,repo,heads_cache,force,branchesmap):
+  closed_branch_tips = {}
+  if not verify_heads(ui,repo,heads_cache,force,branchesmap, closed_branch_tips):
     return 1
 
   try:
@@ -485,8 +493,8 @@ def hg2git(repourl,m,marksfile,mappingfile,headsfile,tipfile,
     max=tip
 
   for rev in range(0,max):
-  	(revnode,_,_,_,_,_,_,_)=get_changeset(ui,repo,rev,authors)
-  	mapping_cache[revnode.encode('hex_codec')] = str(rev)
+    (revnode,_,_,_,_,_,_,_)=get_changeset(ui,repo,rev,authors)
+    mapping_cache[revnode.encode('hex_codec')] = str(rev)
 
   if submodule_mappings:
     # Make sure that all submodules are registered in the submodule-mappings file
@@ -503,7 +511,7 @@ def hg2git(repourl,m,marksfile,mappingfile,headsfile,tipfile,
   for rev in range(min,max):
     c=export_commit(ui,repo,rev,old_marks,max,c,authors,branchesmap,
                     sob,brmap,hgtags,encoding,fn_encoding,
-                    plugins)
+                    plugins, closed_branch_tips)
   if notes:
     for rev in range(min,max):
       c=export_note(ui,repo,rev,c,authors, encoding, rev == min and min != 0)
